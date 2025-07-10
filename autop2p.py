@@ -119,7 +119,8 @@ def getListHD( ngay_from: str = None, ngay_to: str = None) -> str:
             "https://p2p.tima.vn/LoanBrief/LoadDataLender",
             headers=headers,
             cookies=cookie_jar,
-            data=data
+            data=data,
+            timeout=15
         )
 
         try:
@@ -185,7 +186,8 @@ def getLastPhone(so_hop_dong: str, ngay_from: str = None, ngay_to: str = None) -
             "https://p2p.tima.vn/LoanBrief/LoadDataLender",
             headers=headers,
             cookies=cookie_jar,
-            data=data
+            data=data,
+            timeout=15
         )
 
         try:
@@ -253,7 +255,8 @@ def searchSDT(sdt: str, so_hop_dong: str, ngay_from: str = None, ngay_to: str = 
             "https://p2p.tima.vn/LoanBrief/LoadDataLender",
             headers=headers,
             cookies=cookie_jar,
-            data=data
+            data=data,
+            timeout=15
         )
 
         try:
@@ -320,7 +323,8 @@ def getinfo(so_hop_dong:str,sdt:str) -> []:
             "https://p2p.tima.vn/LoanBrief/LoadDataLender",
             headers=headers,
             cookies=cookie_jar,
-            data=data
+            data=data,
+            timeout=15
         )
 
         try:
@@ -485,15 +489,15 @@ def loop():
 
 
 
-
+print("start")
 while True:
     try:
-        time.sleep(27)
+        time.sleep(17)
         updateNewContracts()
         time.sleep(3)
         loop()
     except:
-        time.sleep(30)
+        time.sleep(20)
         pass
 
 

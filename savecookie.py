@@ -6,7 +6,7 @@ with sync_playwright() as p:
     context = browser.contexts[0]  # lấy context đầu tiên
     cookies = context.cookies("https://p2p.tima.vn")
     
-    with open("tima_cookies.json", "w") as f:
+    with open("tabcookies.json", "w") as f:
         json.dump(cookies, f, indent=2)
 
     print("✅ Đã lưu cookies từ session đang mở!")
