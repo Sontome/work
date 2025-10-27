@@ -943,10 +943,13 @@ async def beginRepricePNR(pnr):
 
 
 def parse_pnr(text):
-    data = {"chang": [], "passengers": []}
+    data = {"chang": [], "passengers": [], "paymentstatus": False}
+
+    # ======== CHECK THANH TOÁN ========
+    data["status"] = "OK"
+    data["paymentstatus"] = "FA PAX" in text
 
     # ======== BẮT HÀNH KHÁCH ========
-    # dạng: 1.BUI/THI BICH THUY(ADT)
     passenger_pattern = re.compile(r"(\d+)\.([A-Z]+)\/([A-Z\s]+?)(?:\((\w+)\))?(?=\s+\d+\.|\n|$)")
     for match in passenger_pattern.finditer(text):
         last, first, type_ = match.group(2), match.group(3).strip(), match.group(4) or ""
@@ -956,30 +959,51 @@ def parse_pnr(text):
             "loaikhach": type_
         })
 
-    # ======== BẮT CÁC CHẶNG BAY ========
-    # VD: 5  VN 409 S 03DEC 3 ICNSGN HK4  1035 1355  03DEC  E  VN/ELVT6K
+    # ======== BẮT CHẶNG BAY ========
     flight_pattern = re.compile(
         r"VN\s*(\d+)\s+([A-Z])\s+(\d{2}[A-Z]{3})\s+\d+\s+([A-Z]{3})([A-Z]{3})\s+([A-Z]{2}\d+)\s+(\d{4})\s+(\d{4})\s+(\d{2}[A-Z]{3})"
     )
     chang_so = 1
+    current_year = datetime.now().year
+    current_month = datetime.now().month
+
+    def convert_date(datestr):
+        """Chuyển '03DEC' → '03/12/2025' hoặc 2026"""
+        day = int(datestr[:2])
+        month_str = datestr[2:].upper()
+        month_map = {
+            "JAN": 1, "FEB": 2, "MAR": 3, "APR": 4,
+            "MAY": 5, "JUN": 6, "JUL": 7, "AUG": 8,
+            "SEP": 9, "OCT": 10, "NOV": 11, "DEC": 12
+        }
+        month = month_map.get(month_str, 1)
+
+        # Nếu tháng nhỏ hơn tháng hiện tại → coi là năm sau
+        year = current_year if month >= current_month else current_year + 1
+        return datetime(year, month, day)
+
     for f in flight_pattern.finditer(text):
         so_hieu = f"VN{f.group(1)}"
         loai_ve = f.group(2)
-        ngay_cat = f.group(3)
+        ngay_cat_raw = f.group(3)
         dep = f.group(4)
         arr = f.group(5)
         status = f.group(6)
         gio_cat = f.group(7)
         gio_ha = f.group(8)
-        ngay_ha = f.group(9)
+        ngay_ha_raw = f.group(9)
 
-        # Tính thời gian bay
+        # convert ngày cất cánh và hạ cánh
+        ngay_cat = convert_date(ngay_cat_raw)
+        ngay_ha = convert_date(ngay_ha_raw)
+
+        # Nếu giờ hạ cánh < giờ cất cánh → sang ngày hôm sau
         try:
             t1 = datetime.strptime(gio_cat, "%H%M")
             t2 = datetime.strptime(gio_ha, "%H%M")
             if t2 < t1:
-                t2 = t2.replace(day=t2.day + 1)
-            diff = t2 - t1
+                ngay_ha += timedelta(days=1)
+            diff = (t2 - t1) if t2 >= t1 else ((t2 + timedelta(days=1)) - t1)
             flight_time = f"{diff.seconds//3600:02}:{(diff.seconds//60)%60:02}"
         except:
             flight_time = ""
@@ -993,9 +1017,9 @@ def parse_pnr(text):
             "loaive": loai_ve,
             "status": status,
             "giocatcanh": f"{gio_cat[:2]}:{gio_cat[2:]}",
-            "ngaycatcanh": ngay_cat,
-            "giohacanh": gio_ha,
-            "ngayhacanh": ngay_ha,
+            "ngaycatcanh": ngay_cat.strftime("%d/%m/%Y"),
+            "giohacanh": f"{gio_ha[:2]}:{gio_ha[2:]}",
+            "ngayhacanh": ngay_ha.strftime("%d/%m/%Y"),
             "thoigianbay": flight_time,
             "sohieumaybay": so_hieu
         })
