@@ -438,7 +438,7 @@ def pushData(hop_dong: str, info: dict):
         ws.insert_rows([[""]], row=1)
 
         # Ghi dữ liệu từ A2:G2
-        ws.update(values=[row_data], range_name="A2:G2")
+        ws.update(values=[row_data], range_name="A1:G1")
         print(f"✅ Ghi vào sheet [{sheet_name}]: {row_data}")
 
     except Exception as e:
