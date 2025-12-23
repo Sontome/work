@@ -11,7 +11,9 @@ import re
 import json
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-
+gs = gspread.service_account('autocheckdonserviceacc.json')
+sht = gs.open_by_key('1KrJoO8kKZ5IYr9qJkMiXuKCHoNF-OnjNz05qYTEjrYI')
+RawLOS = sht.worksheet('RawLOS')
 # loanInfoSheet = sht.worksheet('Info')
 
 
