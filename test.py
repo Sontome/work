@@ -1,118 +1,247 @@
+import aiohttp
 import json
-import asyncio
 import re
-from playwright.async_api import async_playwright
-import gspread
-from google.oauth2.service_account import Credentials
+import asyncio
 
-COOKIE_FILE = "fbcookie.json"
-SHEET_ID = "1aEYx3j2tVEtdTMjCsM9bWD6n7jzLTimZ-W_uIoy9YL8"
+class PowerCallClient:
+    def __init__(self, cookie_file="statevna.json"):
+        self.cookie_file = cookie_file
+        self.session = None
+        self.cookies = self._load_cookies()
 
-# ====== CLICK SEE MORE TRONG 1 BÀI ======
-async def try_click_see_more(post):
-    try:
-        candidates = post.locator("div, span").filter(has_text=re.compile(r"See more|Xem thêm", re.I))
-        count = await candidates.count()
-        if count == 0:
-            return  # Không có nút, bỏ qua luôn
-        for i in range(count):
-            btn = candidates.nth(i)
+        self.headers = {
+            "accept": "application/json, text/javascript, */*; q=0.01",
+            "accept-language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
+            "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "x-requested-with": "XMLHttpRequest",
+            "sec-ch-ua": "\"Google Chrome\";v=\"143\", \"Chromium\";v=\"143\", \"Not A(Brand\";v=\"24\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Windows\"",
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "same-origin",
+            "referer": "https://wholesale.powercallair.com/booking/findSkdFareGroup.lts?mode=v3"
+        }
+
+        self.url = "https://wholesale.powercallair.com/booking/findSkdFareGroup.lts?viewType=xml"
+
+    # ===== util =====
+    def _load_cookies(self):
+        with open(self.cookie_file, "r", encoding="utf-8") as f:
+            raw = json.load(f)["cookies"]
+        return {c["name"]: c["value"] for c in raw}
+
+    def _js_object_to_json(self, text: str):
+        text = re.sub(r'([{,]\s*)([A-Za-z0-9_]+)\s*:', r'\1"\2":', text)
+        text = re.sub(r'([{,]\s*)(\d+)\s*:', r'\1"\2":', text)
+        return json.loads(text)
+
+    def _parse_response(self, text: str):
+        text = text.strip()
+
+        if not text:
+            return "EMPTY", None
+
+        if "<html" in text.lower():
+            return "HTML", text[:300]
+
+        if text.startswith("{") and '"' in text:
             try:
-                await btn.scroll_into_view_if_needed()
-                await asyncio.sleep(0.2)
-                await btn.click()
-                await asyncio.sleep(0.2)
-                print("✅ Click See more thành công")
-            except Exception:
-                # Không click được thì bỏ qua, đừng đứng lại
-                pass
-    except Exception as e:
-        print("⚠️ Không click được See more:", e)
+                return "JSON", json.loads(text)
+            except Exception as e:
+                return "JSON_ERROR", str(e)
 
-# ====== CRAWL 1 PAGE ======
-async def crawl_page(context, url):
-    print(f"\n=== Đang vào page: {url} ===")
-    page = await context.new_page()
-    try:
-        await page.goto(url, timeout=10000)
-    except Exception as e:
-        print("⚠️ Lỗi khi load page:", e)
-        await page.close()
-        return []
-
-    posts_xpath = '//div[contains(@id,"_r_")]/div/div/span/div/div'
-
-    print("⬇️ Cuộn trang và mở See more...")
-    last_count = 0
-    for step in range(15):  # scroll nhiều bước nhỏ hơn
-        await page.mouse.wheel(0, 150)  # cuộn nhẹ
-        await asyncio.sleep(0.3)       # delay ngắn
-
-        posts = page.locator(posts_xpath)
-        count = await posts.count()
-
-        # Nếu có bài mới xuất hiện, thử click see more
-        if count > last_count:
-            for i in range(last_count, count):
-                post = posts.nth(i)
-                await try_click_see_more(post)
-            last_count = count
-
-    print(f"✔ Tổng số bài tìm thấy: {count}")
-
-    max_posts = min(5, count)
-    results = []
-    for i in range(max_posts):
-        post = posts.nth(i)
         try:
-            text = await post.inner_text()
-            print(f"--- Bài {i+1} ---\n{text[:200]}...\n")
-            results.append({"text": text.strip()})
+            return "JS_OBJECT", self._js_object_to_json(text)
         except Exception as e:
-            print(f"⚠️ Lỗi bài {i+1}: {e}")
+            return "JS_OBJECT_ERROR", str(e)
 
-    await page.close()
-    return results
-# ====== MAIN ======
+    # ===== session =====
+    async def __aenter__(self):
+        connector = aiohttp.TCPConnector(ssl=False)
+        self.session = aiohttp.ClientSession(
+            cookies=self.cookies,
+            headers=self.headers,
+            connector=connector
+        )
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        if self.session:
+            await self.session.close()
+
+    # ===== API =====
+    async def getfulllistCA(self):
+        form_data = {
+            "mode": "v3",
+            "qcars": "",
+            "trip": "RT",
+            "dayInd": "N",
+            "strDateSearch": "202601",
+            "day": "",
+            "plusDate": "",
+            "daySeq": "0",
+            "dep0": "ICN",
+            "dep1": "HAN",
+            "dep2": "",
+            "dep3": "",
+            "arr0": "HAN",
+            "arr1": "ICN",
+            "arr2": "",
+            "arr3": "",
+            "depdate0": "20260102",
+            "depdate1": "20260103",
+            "depdate2": "",
+            "depdate3": "",
+            "retdate": "20260103",
+            "val": "",
+            "comp": "Y",
+            "adt": "1",
+            "chd": "0",
+            "inf": "0",
+            "car": "YY",
+            "idt": "ALL",
+            "isBfm": "Y",
+            "CBFare": "YY",
+            "skipFilter": "Y",
+            "miniFares": "Y",
+            "sessionKey": ""
+        }
+
+        async with self.session.post(self.url, data=form_data) as resp:
+            text = await resp.text()
+            status, data = self._parse_response(text)
+
+            if status != "JSON":
+                return {"status": status, "raw": data}
+
+        ca_list = []
+        VA =data.get("FILTER", {}).get("VA", [])
+        SK =data.get("FILTER", {}).get("SK", [])
+        MA=data.get("FILTER", {}).get("MA", [])
+        XA=data.get("FILTER", {}).get("XA", [])
+        for item in data.get("FILTER", {}).get("CA", []):
+            ca_list.append({
+                "hang": item.get("value"),
+                "ten": item.get("label"),
+                "status": item.get("ST"),
+                "gia_min": item.get("MA"),
+                "gia_full": item.get("XA")
+            })
+
+        return {
+            "status": "OK",
+            "SessionKey": data.get("SessionKey"),
+            "CA": ca_list,
+            "VA":VA,
+            "SK" :SK,
+            "MA":MA,
+            "XA":XA
+        }
+
+    async def getflights(
+        self,
+        repca:dict,
+        session_key: str,
+        activedCar: str,
+        dep0: str,
+        dep1: str,
+        depdate0: str,
+        depdate1: str | None = None,
+        activedVia: str = "0"
+    ):
+        is_rt = bool(depdate1)
+
+        form_data = {
+            "qcars": "",
+            "mode": "v3",
+            "activedCar": activedCar,
+            "activedCLSS1": "Y,Q,S,B,U,K,M,Q,U,E,L,T,R,H,B,Y,S,N,V",
+            "activedCLSS2": "Y,Q,S,B,U,K,M,Q,U,E,L,T,R,H,B,Y,S,N,V",
+            "activedVia": activedVia,
+            "activedStatus": "OK,HL",
+            "activedIDT": "ADT,STU,VFR,LBR",
+            "minAirFareView": "0",
+            "maxAirFareView": "2000000",
+            "page": "1",
+            "sort": "priceAsc",
+            "filterTimeSlideMin0": "005",
+            "filterTimeSlideMax0": "2355",
+            "filterTimeSlideMin1": "005",
+            "filterTimeSlideMax1": "2355",
+            "trip": "RT" if is_rt else "OW",
+            "dayInd": "N",
+            "strDateSearch": depdate0[:6],
+            "daySeq": "0",
+            "dep0": dep0,
+            "dep1": dep1,
+            "dep2": "", 
+            "dep3": "",
+            "arr0": dep1,
+            "arr1": dep0 if is_rt else "",
+            "arr2": "",
+             "arr3": "",
+            "depdate0": depdate0,
+            "depdate1": depdate1 or "",
+            "depdate2": "",
+            "depdate3": "",
+            "retdate": depdate1 or "",
+            "comp": "Y",
+            "adt": "1",
+            "chd": "0",
+            "inf": "0",
+            "car": "YY",
+            "idt": "ALL",
+            "isBfm": "Y",
+            "CBFare": "YY",
+            "miniFares": "Y",
+            "sessionKey": session_key
+        }
+
+        # activedAirport theo trip
+        if is_rt:
+            form_data["activedAirport"] = f"{dep0}-{dep1}-{dep1}-{dep0}"
+        else:
+            form_data["activedAirport"] = f"{dep0}-{dep1}"
+
+        async with self.session.post(self.url, data=form_data) as resp:
+            text = await resp.text()
+            status, data = self._parse_response(text)
+
+            if status not in ("JSON", "JS_OBJECT"):
+                return {"status": status, "raw": data}
+
+        return {
+            "status": "OK",
+            "PAGE": data.get("PAGE"),
+            "TOTALPAGE": data.get("TOTALPAGE"),
+            "TOTALFARES": data.get("TOTALFARES"),
+            "FARES": data.get("FARES", []),
+            "SessionKey": data.get("SessionKey")
+        }
 async def main():
-    # Load cookie FB
-    try:
-        cookies = json.load(open(COOKIE_FILE, "r", encoding="utf-8"))
-    except:
-        print("❌ Không tìm thấy fbcookie.json")
-        return
+    async with PowerCallClient() as pc:
+        ca = await pc.getfulllistCA()
+        
+        ca_list = ca.get("CA", [])
+        print(ca["SK"])
+        sskey = ca.get("SessionKey")
+        # check có hãng VN không
+        has_vn = any(hang .get("hang") == "VN" for hang in ca_list)
+       
 
-    # Google Sheets
-    scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-    creds = Credentials.from_service_account_file("botfbcre.json", scopes=scopes)
-    client = gspread.authorize(creds)
+        
+        if has_vn and  sskey :
+            flights = await pc.getflights(
+                repca=ca,
+                session_key= sskey,
+                activedCar= "VN",
+                dep0= "ICN",
+                dep1= "HAN",
+                depdate0= "20260102",
+                depdate1= "20260103" ,
+                activedVia=  "0")
+            print(flights)
+            print(sskey)
 
-    sheet_config = client.open_by_key(SHEET_ID).worksheet("Config")
-    sheet_output = client.open_by_key(SHEET_ID).worksheet("Crawdata")
-
-    links = sheet_config.col_values(2)[1:]
-    print("Danh sách link cần craw:")
-    for l in links:
-        print(" -", l)
-
-    async with async_playwright() as p:
-        for link in links:
-            print(f"\n🚀 Bắt đầu crawl page: {link}")
-            browser = await p.chromium.launch(headless=False)
-            context = await browser.new_context()
-            await context.add_cookies(cookies)
-
-            sheet_output.clear() if links.index(link) == 0 else None
-            if links.index(link) == 0:
-                sheet_output.append_row(["Page", "Index", "Content"])
-
-            posts = await crawl_page(context, link)
-            for i, content in enumerate(posts):
-                sheet_output.append_row([link, i+1, content["text"]])
-
-            await browser.close()  # tắt hẳn browser sau mỗi page
-
-    print("\n🎉 DONE – Craw xong và lưu vào sheet Crawdata")
-
-if __name__ == "__main__":
-    asyncio.run(main())
+asyncio.run(main())
