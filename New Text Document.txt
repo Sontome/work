@@ -1,0 +1,9 @@
+ssh root@103.149.28.32
+
+gT5dC7!!
+
+~/fix.sh
+
+~/fix1a.sh
+
+
