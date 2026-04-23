@@ -1,6 +1,6 @@
 
 from playwright.sync_api import TimeoutError,sync_playwright
-
+from utils_telegram import send_mess 
 
 # =========================
 # CONFIG
@@ -253,8 +253,8 @@ def fill_customer(page, customers):
     Mỗi khách gồm: type, gender, firstname, lastname
     Ví dụ:
     [
-        {"type": "ADT", "gender": "M", "firstname": "AN", "lastname": "NGUYEN"},
-        {"type": "CHD", "gender": "F", "firstname": "BINH", "lastname": "TRAN"}
+        {"type": "ADT", "gender": "M", "firstname": "AN", "lastname": "NGUYEN" ,"birthday" :"20000130"},
+        {"type": "CHD", "gender": "F", "firstname": "BINH", "lastname": "TRAN","birthday" :"20000130"}
     ]
     """
     print(f"🧾 Bắt đầu điền thông tin {len(customers)} khách")
@@ -275,7 +275,7 @@ def fill_customer(page, customers):
         first_name = str(customer.get("firstname", "")).strip().upper()
         last_name = str(customer.get("lastname", "")).strip().upper()
         pax_type = str(customer.get("type", "")).strip().upper()
-
+        # birthday = str(customer.get("birthday", "")).strip()
         print(
             f"👤 Khách {idx} - TYPE:{pax_type or 'N/A'}, "
             f"GENDER:{gender}, LAST:{last_name}, FIRST:{first_name}"
@@ -284,7 +284,7 @@ def fill_customer(page, customers):
         gender_selector = f"#paxGenderRadio{gender}{idx}"
         last_name_selector = f"#paxLastNameEn{idx}"
         first_name_selector = f"#paxFirstNameEn{idx}"
-        hidden_gender_selector = f"#paxGender{idx}"
+        birth_gender_selector = f"#paxBirth{idx}"
 
         page.locator(gender_selector).wait_for(state="visible", timeout=10000)
         page.evaluate("""
@@ -308,6 +308,10 @@ def fill_customer(page, customers):
         # page.keyboard.press("Control+A")
         # page.keyboard.press("Backspace")
         page.type(first_name_selector, first_name, delay=1)
+        # page.click(birth_gender_selector)
+        # page.keyboard.press("Control+A")
+        # page.keyboard.press("Backspace")
+        # page.type(birth_gender_selector, birthday, delay=1)
 
     print("✅ Đã điền xong thông tin khách")
 def fill_phone(page, phone="010-2451-1790"):
@@ -327,18 +331,77 @@ def fill_phone(page, phone="010-2451-1790"):
     page.locator('input[name="revMobile03"]').wait_for(state="visible", timeout=10000)
     page.fill('input[name="revMobile03"]', "")
     page.fill('input[name="revMobile03"]', last)
-
+    page.fill('input[name="stayPhone"]', "01035463396")
     for checkbox_id in ("#ruleAgree1", "#ruleAgree2", "#ruleAgree3"):
         checkbox = page.locator(checkbox_id)
         checkbox.wait_for(state="visible", timeout=10000)
         if not checkbox.is_checked():
             checkbox.check(force=True)
 
-    print("✅ Đã điền phone và tick 3 điều khoản")
+    finish_btn = page.locator('[onclick="finishPaxInfo();"]').first
+    finish_btn.wait_for(state="visible", timeout=10000)
+    page.wait_for_load_state("networkidle")
+    wait_loading_finish(page)
+
+    # Site dùng JS dialog (alert/confirm). Một số bản Playwright cũ
+    # không có expect_dialog(), nên dùng expect_event("dialog") để tương thích.
+    with page.expect_event("dialog", timeout=10000) as dialog_info:
+        finish_btn.click()
+    dialog = dialog_info.value
+    print(f"📣 Dialog sau khi bấm hoàn tất: {dialog.type} - {dialog.message}")
+    dialog.accept()
+
+    # Sau khi xác nhận, web chuyển sang màn hình đặt vé thành công.
+    page.wait_for_load_state("domcontentloaded")
+    page.wait_for_load_state("networkidle")
+
+    booking_code = ""
+    total_fee = ""
+    try:
+        booking_code_cell = page.locator(
+            "xpath=//tr[.//img[@alt='예약번호']]//td[1]"
+        ).first
+        booking_code_cell.wait_for(state="visible", timeout=15000)
+        booking_code = booking_code_cell.inner_text().strip()
+
+        total_fee_cell = page.locator(
+            "xpath=//tr[.//img[@alt='Total fee']]//td[1]"
+        ).first
+        total_fee_cell.wait_for(state="visible", timeout=15000)
+        total_fee = total_fee_cell.inner_text().strip()
+    except TimeoutError:
+        print("⚠️ Không tìm thấy đủ thông tin mã giữ chỗ / tổng tiền trên trang kết quả.")
+
+    if booking_code or total_fee:
+        mess = f"đã giữ vé {booking_code} thành công , giá : {total_fee}"
+        send_mess(mess)
+        print(f"📨 Đã gửi thông báo: {mess}")
+    else:
+        print("⚠️ Chưa gửi thông báo vì không lấy được dữ liệu mã giữ chỗ và giá.")
+        send_mess("Giữ vé orther lỗi, hãy giữ lại")
+    print("✅ Đã điền phone, tick 3 điều khoản và bấm hoàn tất")
 # =========================
 # MAIN
 # =========================
-def run():
+def booking_other(hang,from_code, to_code, dep_date, arr_date="", index="", customer=""):
+    type_order = {"ADT": 0, "CHD": 1, "INF": 2}
+    normalized_customer = []
+
+    for item in customer or []:
+        current = dict(item)
+        current_type = str(current.get("type", "ADT")).strip().upper()
+        current["type"] = current_type if current_type in type_order else "ADT"
+        normalized_customer.append(current)
+
+    type_count = {"ADT": 0, "CHD": 0, "INF": 0}
+    for item in normalized_customer:
+        type_count[item["type"]] += 1
+
+    sorted_customer = sorted(
+        normalized_customer,
+        key=lambda x: (type_order.get(x["type"], 99), -type_count.get(x["type"], 0))
+    )
+
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=False,
@@ -359,22 +422,28 @@ def run():
         print("✅ Đã login bằng state")
 
         # chạy tiếp luôn
-        fill_route(page, "HAN", "ICN")
-        fill_passenger_count(page, adt=2, chd=1, inf=1)
-        fill_depart_date(page,"2026/06/18","2026/06/20")
+        fill_route(page, from_code, to_code)
+        fill_passenger_count(
+            page,
+            adt=type_count["ADT"],
+            chd=type_count["CHD"],
+            inf=type_count["INF"]
+        )
+        fill_depart_date(page, dep_date, arr_date)
         submit_search(page)
-        select_airline(page=page,airline_code="KE")
+        select_airline(page=page,airline_code=hang)
         #input("enter")
-        select_fare(page=page,fare_id="8")
+        select_fare(page=page,fare_id=str(index))
         #input("enter")
-        reserve_selected_fare(page=page,fareindex="8",adt=2,chd=1,inf=1)
+        reserve_selected_fare(
+            page=page,
+            fareindex=str(index),
+            adt=type_count["ADT"],
+            chd=type_count["CHD"],
+            inf=type_count["INF"]
+        )
         # Ví dụ gọi hàm điền khách sau khi màn hình passenger đã hiển thị:
-        fill_customer(page, [
-            {"type": "ADT", "gender": "NAM", "firstname": "VAN A", "lastname": "NGUYEN"},
-            {"type": "ADT", "gender": "NAM", "firstname": "THI B", "lastname": "TRAN"},
-            {"type": "CHD", "gender": "NAM", "firstname": "BE C", "lastname": "LE"},
-            {"type": "INF", "gender": "NU", "firstname": "BABY D", "lastname": "PHAM"}
-        ])
+        fill_customer(page, sorted_customer)
         fill_phone(page)
         # giữ browser mở để test tiếp
         input("Nhấn Enter khi muốn tắt browser...")
@@ -383,4 +452,18 @@ def run():
 
 
 if __name__ == "__main__":
-    run()
+    booking_other(
+        hang="OZ",
+        from_code="HAN",
+        to_code="ICN",
+        dep_date="2026/06/18",
+        arr_date="2026/06/20",
+        index="17",
+        customer=[
+            {"type": "ADT", "gender": "NAM", "firstname": "VAN A", "lastname": "NGUYEN","birthday" :"20000130"}
+            
+            # {"type": "CHD", "gender": "NAM", "firstname": "BE C", "lastname": "LE"},
+            # {"type": "INF", "gender": "NU", "firstname": "BABY D", "lastname": "PHAM"},
+            # {"type": "ADT", "gender": "NAM", "firstname": "THI B", "lastname": "TRAN"}
+        ]
+    )
